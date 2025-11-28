@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitcoin Cost Model</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔷 Bitcoin Cost Model</h1>
+            <p class="subtitle">Implied Volatility Surface & Arbitrage Detection</p>
+        </header>
+
+        <!-- Control Panel -->
+        <section class="control-panel">
+            <div class="panel-header">
+                <h2>📊 Data Source</h2>
+            </div>
+            <div class="panel-content">
+                <div class="button-group">
+                    <button id="btn-fetch-deribit" class="btn btn-primary">
+                        🔄 Fetch Live Deribit Data
+                    </button>
+                    <button id="btn-manual-input" class="btn btn-secondary">
+                        ✏️ Manual Input
+                    </button>
+                </div>
+                <div id="status" class="status"></div>
+            </div>
+        </section>
+
+        <!-- Manual Input Modal -->
+        <div id="manual-modal" class="modal hidden">
+            <div class="modal-content">
+                <h3>Manual Surface Input</h3>
+                <form id="manual-form">
+                    <div class="form-group">
+                        <label>BTC Spot Price ($)</label>
+                        <input type="number" id="spot-input" value="95000" step="100">
+                    </div>
+                    <div id="maturities-container">
+                        <h4>Maturities</h4>
+                        <div class="maturity-row" data-index="0">
+                            <input type="number" placeholder="Months" value="1" step="1" class="mat-months">
+                            <input type="number" placeholder="ATM Vol %" value="52" step="1" class="mat-vol">
+                            <input type="number" placeholder="Skew" value="-0.06" step="0.01" class="mat-skew">
+                            <input type="number" placeholder="Curv" value="0.40" step="0.01" class="mat-curv">
+                        </div>
+                        <div class="maturity-row" data-index="1">
+                            <input type="number" placeholder="Months" value="3" step="1" class="mat-months">
+                            <input type="number" placeholder="ATM Vol %" value="47" step="1" class="mat-vol">
+                            <input type="number" placeholder="Skew" value="-0.045" step="0.01" class="mat-skew">
+                            <input type="number" placeholder="Curv" value="0.32" step="0.01" class="mat-curv">
+                        </div>
+                        <div class="maturity-row" data-index="2">
+                            <input type="number" placeholder="Months" value="6" step="1" class="mat-months">
+                            <input type="number" placeholder="ATM Vol %" value="44" step="1" class="mat-vol">
+                            <input type="number" placeholder="Skew" value="-0.04" step="0.01" class="mat-skew">
+                            <input type="number" placeholder="Curv" value="0.28" step="0.01" class="mat-curv">
+                        </div>
+                        <div class="maturity-row" data-index="3">
+                            <input type="number" placeholder="Months" value="12" step="1" class="mat-months">
+                            <input type="number" placeholder="ATM Vol %" value="42" step="1" class="mat-vol">
+                            <input type="number" placeholder="Skew" value="-0.035" step="0.01" class="mat-skew">
+                            <input type="number" placeholder="Curv" value="0.25" step="0.01" class="mat-curv">
+                        </div>
+                    </div>
+                    <button type="button" id="btn-add-maturity" class="btn btn-small">+ Add Maturity</button>
+                    <div class="modal-buttons">
+                        <button type="submit" class="btn btn-primary">Build Surface</button>
+                        <button type="button" id="btn-close-modal" class="btn btn-secondary">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Market Info -->
+        <section id="market-info" class="panel hidden">
+            <div class="panel-header">
+                <h2>📈 Market Info</h2>
+            </div>
+            <div class="panel-content">
+                <div class="info-grid">
+                    <div class="info-card">
+                        <span class="label">BTC Spot</span>
+                        <span id="spot-price" class="value">--</span>
+                    </div>
+                    <div class="info-card">
+                        <span class="label">Regime</span>
+                        <span id="regime" class="value">--</span>
+                    </div>
+                    <div class="info-card">
+                        <span class="label">Term Structure</span>
+                        <span id="term-structure" class="value">--</span>
+                    </div>
+                    <div class="info-card">
+                        <span class="label">Skew</span>
+                        <span id="skew-regime" class="value">--</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Break-Evens Table -->
+        <section id="break-evens-section" class="panel hidden">
+            <div class="panel-header">
+                <h2>⚖️ Cost Model Break-Evens</h2>
+            </div>
+            <div class="panel-content">
+                <table id="break-evens-table">
+                    <thead>
+                        <tr>
+                            <th>Maturity</th>
+                            <th>ATM Vol</th>
+                            <th>Gamma BE</th>
+                            <th>Volga BE</th>
+                            <th>Vanna BE</th>
+                            <th>ρ(S,σ)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="break-evens-body"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Charts Section -->
+        <section id="charts-section" class="panel hidden">
+            <div class="panel-header">
+                <h2>📉 Volatility Surface</h2>
+            </div>
+            <div class="panel-content">
+                <div class="charts-grid">
+                    <div class="chart-container">
+                        <div id="surface-3d" style="height: 400px;"></div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="smile-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="term-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="breakeven-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Arbitrage Opportunities -->
+        <section id="arbitrage-section" class="panel hidden">
+            <div class="panel-header">
+                <h2>🎯 Arbitrage Opportunities</h2>
+            </div>
+            <div class="panel-content">
+                <div id="opportunities-list"></div>
+            </div>
+        </section>
+
+        <!-- Model vs Market Comparison -->
+        <section id="comparison-section" class="panel hidden">
+            <div class="panel-header">
+                <h2>⚖️ Model vs Market</h2>
+                <div class="header-controls">
+                    <label>Threshold: 
+                        <select id="threshold-select">
+                            <option value="0.005">0.5 vol pts</option>
+                            <option value="0.01" selected>1 vol pt</option>
+                            <option value="0.02">2 vol pts</option>
+                            <option value="0.03">3 vol pts</option>
+                        </select>
+                    </label>
+                    <button id="btn-refresh-comparison" class="btn btn-small">Refresh</button>
+                </div>
+            </div>
+            <div class="panel-content">
+                <!-- Summary Cards -->
+                <div class="comparison-summary" id="comparison-summary"></div>
+                
+                <!-- Heatmap -->
+                <div class="chart-container">
+                    <div id="heatmap-chart" style="height: 350px;"></div>
+                </div>
+                
+                <!-- Top Mispricings Table -->
+                <h4>Top Mispricings</h4>
+                <div class="table-container">
+                    <table id="signals-table">
+                        <thead>
+                            <tr>
+                                <th>Instrument</th>
+                                <th>Type</th>
+                                <th>Strike</th>
+                                <th>Maturity</th>
+                                <th>Market IV</th>
+                                <th>Model IV</th>
+                                <th>Spread</th>
+                                <th>Signal</th>
+                            </tr>
+                        </thead>
+                        <tbody id="signals-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Trade Recommendations -->
+        <section id="trades-section" class="panel hidden">
+            <div class="panel-header">
+                <h2>💰 Trade Recommendations</h2>
+            </div>
+            <div class="panel-content">
+                <div id="trades-list"></div>
+            </div>
+        </section>
+
+        <!-- Theta Decomposition Tool -->
+        <section id="theta-section" class="panel hidden">
+            <div class="panel-header">
+                <h2>🔬 Theta Decomposition</h2>
+            </div>
+            <div class="panel-content">
+                <div class="theta-inputs">
+                    <div class="form-group">
+                        <label>Strike ($)</label>
+                        <input type="number" id="theta-strike" value="95000" step="1000">
+                    </div>
+                    <div class="form-group">
+                        <label>Maturity (months)</label>
+                        <input type="number" id="theta-maturity" value="3" step="1">
+                    </div>
+                    <button id="btn-calc-theta" class="btn btn-primary">Calculate</button>
+                </div>
+                <div id="theta-result"></div>
+            </div>
+        </section>
+
+        <footer>
+            <p>Based on Gilbert Eid's Cost Model • Built for options trading research</p>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
