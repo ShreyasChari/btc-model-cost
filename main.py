@@ -114,8 +114,20 @@ async def fetch_deribit_surface():
             T = opt['maturity']
             if T not in by_maturity:
                 by_maturity[T] = {'strikes': [], 'vols': []}
-            by_maturity[T]['strikes'].append(opt['strike'])
-            by_maturity[T]['vols'].append(opt['mid_iv'])
+            
+            strike = opt['strike']
+            vol = opt['mid_iv']
+            if not strike or not vol:
+                continue
+            
+            moneyness = strike / spot
+            if not (0.6 <= moneyness <= 1.4):
+                continue
+            if vol <= 0 or vol > 1.0:
+                continue
+            
+            by_maturity[T]['strikes'].append(strike)
+            by_maturity[T]['vols'].append(vol)
         
         import numpy as np
         for T, data in sorted(by_maturity.items()):
