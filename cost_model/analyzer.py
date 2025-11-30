@@ -4,7 +4,7 @@ Identifies trading opportunities based on Cost Model mispricings
 """
 
 from typing import List, Dict, Optional
-from .surface import BitcoinVolSurface
+from .surface import BitcoinVolSurface, format_maturity_label
 from .greeks import bs_price, calculate_greeks
 
 
@@ -51,8 +51,8 @@ class CostModelAnalyzer:
             vol_spread = p1.get('atm_vol', 0) - p2.get('atm_vol', 0)
             gamma_spread = c1.gamma_be - c2.gamma_be
             
-            mat1_label = f"{int(T1*12)}M" if T1 < 1 else f"{T1:.1f}Y"
-            mat2_label = f"{int(T2*12)}M" if T2 < 1 else f"{T2:.1f}Y"
+            mat1_label = format_maturity_label(T1)
+            mat2_label = format_maturity_label(T2)
             
             if vol_spread > 0.02:  # >2 vol points backwardation
                 opportunities.append({
@@ -69,7 +69,7 @@ class CostModelAnalyzer:
             elif vol_spread < -0.02:  # >2 vol points contango
                 opportunities.append({
                     'type': 'calendar_spread',
-                    'direction': 'buy_short_sell_long',
+                    'direction': 'sell_long_buy_short',
                     'short_maturity': T1,
                     'long_maturity': T2,
                     'label': f"{mat1_label} vs {mat2_label}",
@@ -94,7 +94,7 @@ class CostModelAnalyzer:
             call_iv = self.surface.get_vol(self.spot * 1.10, T)
             actual_skew = put_iv - call_iv
             
-            mat_label = f"{int(T*12)}M" if T < 1 else f"{T:.1f}Y"
+            mat_label = format_maturity_label(T)
             
             if actual_skew > 0.025:  # Puts 2.5+ vol points expensive
                 opportunities.append({
@@ -133,7 +133,7 @@ class CostModelAnalyzer:
                 continue
             
             ratio = c.volga_be / c.gamma_be if c.gamma_be != 0 else 0
-            mat_label = f"{int(T*12)}M" if T < 1 else f"{T:.1f}Y"
+            mat_label = format_maturity_label(T)
             
             if ratio < 0.60:  # Wings cheap
                 opportunities.append({
@@ -248,14 +248,33 @@ class CostModelAnalyzer:
         put2 = bs_price(self.spot, self.spot, T2, 0, iv2, 'put')
         straddle2 = call2 + put2
         
-        mat1_label = f"{int(T1*12)}M" if T1 < 1 else f"{T1:.1f}Y"
-        mat2_label = f"{int(T2*12)}M" if T2 < 1 else f"{T2:.1f}Y"
+        mat1_label = format_maturity_label(T1)
+        mat2_label = format_maturity_label(T2)
+        direction = opp.get('direction', 'sell_short_buy_long')
         
-        return {
-            'strategy': 'Calendar Spread',
-            'conviction': opp['conviction'],
-            'rationale': opp['rationale'],
-            'legs': [
+        if direction == 'sell_long_buy_short':
+            legs = [
+                {
+                    'action': 'SELL',
+                    'instrument': f'{mat2_label} ATM Straddle',
+                    'strike': self.spot,
+                    'maturity': T2,
+                    'iv': iv2,
+                    'price': straddle2,
+                    'details': f"Sell {mat2_label} ${self.spot:,.0f} Call @ ${call2:,.0f} + Put @ ${put2:,.0f}"
+                },
+                {
+                    'action': 'BUY',
+                    'instrument': f'{mat1_label} ATM Straddle',
+                    'strike': self.spot,
+                    'maturity': T1,
+                    'iv': iv1,
+                    'price': straddle1,
+                    'details': f"Buy {mat1_label} ${self.spot:,.0f} Call @ ${call1:,.0f} + Put @ ${put1:,.0f}"
+                }
+            ]
+        else:
+            legs = [
                 {
                     'action': 'SELL',
                     'instrument': f'{mat1_label} ATM Straddle',
@@ -274,8 +293,19 @@ class CostModelAnalyzer:
                     'price': straddle2,
                     'details': f"Buy {mat2_label} ${self.spot:,.0f} Call @ ${call2:,.0f} + Put @ ${put2:,.0f}"
                 }
-            ],
-            'net_debit': straddle2 - straddle1,
+            ]
+        
+        net_cash = sum(
+            leg['price'] if leg['action'] == 'SELL' else -leg['price']
+            for leg in legs
+        )
+        
+        return {
+            'strategy': 'Calendar Spread',
+            'conviction': opp['conviction'],
+            'rationale': opp['rationale'],
+            'legs': legs,
+            'net_debit': -net_cash,  # Positive => debit paid, Negative => credit received
             'greeks': {
                 'net_gamma': 'near zero',
                 'net_theta': 'positive',
@@ -300,7 +330,7 @@ class CostModelAnalyzer:
         put_price = bs_price(self.spot, put_strike, T, 0, put_iv, 'put')
         call_price = bs_price(self.spot, call_strike, T, 0, call_iv, 'call')
         
-        mat_label = f"{int(T*12)}M" if T < 1 else f"{T:.1f}Y"
+        mat_label = format_maturity_label(T)
         
         if opp['direction'] == 'sell_put_skew':
             return {
@@ -361,7 +391,7 @@ class CostModelAnalyzer:
         straddle_mid = put_mid + call_mid
         wing_cost = put_low + call_high
         
-        mat_label = f"{int(T*12)}M" if T < 1 else f"{T:.1f}Y"
+        mat_label = format_maturity_label(T)
         
         if opp['direction'] == 'buy_wings':
             return {

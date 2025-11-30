@@ -106,7 +106,7 @@ class DeribitClient:
                 exp_date = datetime.fromtimestamp(exp_timestamp)
                 days_to_expiry = (exp_date - now).days
                 
-                if days_to_expiry <= 0:
+                if days_to_expiry < 3:
                     continue
                 
                 # Get mark IV
@@ -118,6 +118,7 @@ class DeribitClient:
                     'instrument': name,
                     'strike': inst['strike'],
                     'maturity': days_to_expiry / 365,  # Convert to years
+                    'days_to_expiry': days_to_expiry,
                     'expiration': exp_date.strftime('%Y-%m-%d'),
                     'option_type': inst['option_type'],
                     'mid_iv': mark_iv / 100,  # Convert from % to decimal

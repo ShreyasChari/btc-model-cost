@@ -10,6 +10,20 @@ from typing import Dict, List, Optional, Tuple
 from .greeks import calculate_greeks, bs_price
 
 
+def format_maturity_label(maturity: float, days_to_expiry: Optional[int] = None) -> str:
+    """
+    Format maturities so short-dated options (<~1M) display actual days instead of "0M".
+    """
+    approx_days = max(int(round(maturity * 365)), 0)
+    days = days_to_expiry if days_to_expiry is not None else approx_days
+    if days < 30:
+        return f"{max(days, 0)}D"
+    if maturity < 1:
+        months = max(int(round(maturity * 12)), 1)
+        return f"{months}M"
+    return f"{maturity:.1f}Y"
+
+
 @dataclass
 class CostParams:
     """
@@ -308,7 +322,7 @@ class BitcoinVolSurface:
             p = self.smile_params.get(T, {'atm_vol': 0, 'skew': 0, 'curvature': 0})
             result.append({
                 'maturity': float(T),
-                'maturity_label': f"{int(T*12)}M" if T < 1 else f"{T:.1f}Y",
+                'maturity_label': format_maturity_label(T),
                 'atm_vol': float(p['atm_vol']),
                 'skew': float(p['skew']),
                 'curvature': float(p['curvature']),
@@ -364,7 +378,9 @@ class MarketComparison:
         rich_count = 0
         cheap_count = 0
         total_spread = 0
-        
+        eligible_count = 0
+        spot = self.surface.spot or 0
+
         for opt in self.market_data:
             K = opt['strike']
             T = opt['maturity']
@@ -380,15 +396,26 @@ class MarketComparison:
             spread = market_iv - model_iv  # Positive = market rich, Negative = market cheap
             spread_bps = spread * 10000  # Convert to basis points
             
+            option_type = str(opt.get('option_type', '')).lower()
+            is_call = option_type == 'call'
+            is_put = option_type == 'put'
+            is_in_the_money = (is_call and K < spot) or (is_put and K > spot)
+
             # Determine signal
             if spread > threshold:
                 signal = 'RICH'
-                rich_count += 1
             elif spread < -threshold:
                 signal = 'CHEAP'
-                cheap_count += 1
             else:
                 signal = 'FAIR'
+
+            if not is_in_the_money:
+                eligible_count += 1
+                total_spread += abs(spread)
+                if signal == 'RICH':
+                    rich_count += 1
+                elif signal == 'CHEAP':
+                    cheap_count += 1
             
             # Bid/ask context
             bid_iv = opt.get('bid_iv')
@@ -409,7 +436,7 @@ class MarketComparison:
                 'instrument': opt.get('instrument', f"K={K}, T={T:.2f}"),
                 'strike': K,
                 'maturity': T,
-                'maturity_label': f"{int(T*12)}M" if T < 1 else f"{T:.1f}Y",
+                'maturity_label': format_maturity_label(T, opt.get('days_to_expiry')),
                 'moneyness': K / self.surface.spot,
                 'option_type': opt.get('option_type', 'unknown'),
                 'market_iv': market_iv,
@@ -423,12 +450,14 @@ class MarketComparison:
                 'ask_iv': ask_iv,
                 'volume': opt.get('volume', 0),
                 'open_interest': opt.get('open_interest', 0),
+                'in_the_money': is_in_the_money,
             })
-            
-            total_spread += abs(spread)
         
         # Filter actionable signals
-        signals = [c for c in comparisons if c['signal'] != 'FAIR']
+        signals = [
+            c for c in comparisons 
+            if c['signal'] in ('RICH', 'CHEAP') and not c['in_the_money']
+        ]
         signals_sorted = sorted(signals, key=lambda x: abs(x['spread']), reverse=True)
         
         # Group by maturity for heatmap
@@ -443,12 +472,12 @@ class MarketComparison:
             'comparisons': comparisons,
             'signals': signals_sorted[:20],  # Top 20 mispricings
             'summary': {
-                'total_options': len(comparisons),
+                'total_options': eligible_count,
                 'rich_count': rich_count,
                 'cheap_count': cheap_count,
-                'fair_count': len(comparisons) - rich_count - cheap_count,
-                'avg_abs_spread': total_spread / len(comparisons) if comparisons else 0,
-                'avg_abs_spread_bps': (total_spread / len(comparisons) * 10000) if comparisons else 0,
+                'fair_count': max(eligible_count - rich_count - cheap_count, 0),
+                'avg_abs_spread': (total_spread / eligible_count) if eligible_count else 0,
+                'avg_abs_spread_bps': ((total_spread / eligible_count) * 10000) if eligible_count else 0,
             },
             'by_maturity': {str(k): v for k, v in sorted(by_maturity.items())}
         }
