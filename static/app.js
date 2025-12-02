@@ -5,6 +5,7 @@
 // Global state
 let surfaceData = null;
 let charts = {};
+let volPredictorData = null;
 
 // ============================================================================
 // API Functions
@@ -59,6 +60,7 @@ async function loadSurfaceData() {
         renderCharts();
         await loadArbitrage();
         await loadTrades();
+        await loadVolPredictor();
         showSections();
     } catch (error) {
         showStatus(`Error loading surface: ${error.message}`, 'error');
@@ -115,6 +117,174 @@ async function calculateTheta() {
     } catch (error) {
         document.getElementById('theta-result').innerHTML = 
             `<div class="error">Error: ${error.message}</div>`;
+    }
+}
+
+// ============================================================================
+// Vol Predictor Functions
+// ============================================================================
+
+async function loadVolPredictor() {
+    const note = document.getElementById('vol-model-note');
+    try {
+        volPredictorData = await fetchAPI('/volpredictor');
+        renderVolPredictor(volPredictorData);
+    } catch (error) {
+        console.error('Error loading Vol Predictor:', error);
+        if (note) {
+            note.textContent = `Unable to load DVOL analytics: ${error.message}`;
+        }
+    }
+}
+
+function renderVolPredictor(data) {
+    if (!data || !data.latest || !data.stats) return;
+    
+    const latest = data.latest;
+    const stats = data.stats;
+    
+    setText('predicted-vol', formatVol(latest.predicted));
+    setText('actual-vol', formatVol(latest.actual));
+    setText('vol-forecast', formatVol(latest.forecast_next));
+    
+    const errorValue = latest.actual - latest.predicted;
+    const errorEl = document.getElementById('vol-error');
+    if (errorEl) {
+        errorEl.textContent = `${errorValue >= 0 ? '+' : ''}${(errorValue * 100).toFixed(2)} pts`;
+        setDeltaClass(errorEl, errorValue);
+    }
+    
+    setText('vol-rmse', formatVol(stats.rmse));
+    setText('vol-mae', formatVol(stats.mae));
+    setText('vol-bias', `${stats.bias >= 0 ? '+' : ''}${(stats.bias * 100).toFixed(2)} pts`);
+    setText('vol-hit-rate', `${(stats.direction_hit_rate * 100).toFixed(0)}%`);
+    setText('vol-corr', stats.correlation ? stats.correlation.toFixed(2) : '--');
+    setText('vol-volatility', formatVol(stats.vol_of_vol));
+    setText('vol-regime', stats.regime);
+    setText('vol-sample', `${stats.sample_size} bars`);
+    
+    const note = document.getElementById('vol-model-note');
+    if (note && data.model) {
+        const updatedAt = data.refreshed_at || latest.timestamp;
+        const updatedDisplay = updatedAt ? new Date(updatedAt).toLocaleString() : latest.timestamp;
+        note.textContent = `Model: ${data.model.type} • α=${data.model.alpha} • Window=${data.model.window} • Updated ${updatedDisplay}`;
+    }
+    
+    const volPanel = document.getElementById('volpredictor-panel');
+    if (volPanel && !volPanel.hidden) {
+        renderVolPredictorChart(data.timeseries || []);
+    } else {
+        charts.volpredictor = null;
+    }
+    renderVolInsights(data.insights || []);
+}
+
+function renderVolPredictorChart(timeseries) {
+    const container = document.getElementById('volpredictor-plot');
+    if (!container || !timeseries || timeseries.length === 0) return;
+    if (!window.Plotly) {
+        console.warn('Plotly library not loaded; cannot render DVOL chart');
+        return;
+    }
+    
+    container.style.width = '100%';
+    container.style.height = '350px';
+    
+    const timestamps = timeseries.map(point => new Date(point.timestamp));
+    const actualSeries = timeseries.map(point => point.actual * 100);
+    const predictedSeries = timeseries.map(point => point.predicted * 100);
+    
+    const data = [
+        {
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Actual DVOL',
+            x: timestamps,
+            y: actualSeries,
+            line: { color: '#ff6384', width: 2 },
+            marker: { color: '#ff6384', size: 6, symbol: 'circle' }
+        },
+        {
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Predicted DVOL',
+            x: timestamps,
+            y: predictedSeries,
+            line: { color: '#36a2eb', width: 2, dash: 'dash' },
+            marker: { color: '#36a2eb', size: 6, symbol: 'circle-open' }
+        }
+    ];
+    
+    const layout = {
+        title: { text: 'Predicted vs Actual DVOL', font: { color: '#cbd5e0' } },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        margin: { l: 60, r: 20, t: 50, b: 80 },
+        xaxis: {
+            title: 'Timestamp',
+            tickangle: 45,
+            color: '#94a3b8',
+            gridcolor: 'rgba(148,163,184,0.2)'
+        },
+        yaxis: {
+            title: 'Vol Points (%)',
+            color: '#94a3b8',
+            gridcolor: 'rgba(148,163,184,0.2)'
+        },
+        legend: { orientation: 'h', x: 0.5, y: -0.2, xanchor: 'center', font: { color: '#cbd5e0' } }
+    };
+    
+    const config = { responsive: true, displaylogo: false };
+    
+    if (charts.volpredictor) {
+        Plotly.react(container, data, layout, config);
+    } else {
+        Plotly.newPlot(container, data, layout, config).then(() => {
+            charts.volpredictor = container.id;
+            Plotly.Plots.resize(container);
+        });
+    }
+}
+
+function renderVolInsights(insights) {
+    const list = document.getElementById('vol-insights');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    if (!insights || insights.length === 0) {
+        const item = document.createElement('li');
+        item.textContent = 'No analytics available yet.';
+        list.appendChild(item);
+        return;
+    }
+    
+    insights.forEach(text => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        list.appendChild(li);
+    });
+}
+
+function formatVol(value, decimals = 2) {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+        return '--';
+    }
+    return `${value.toFixed(decimals)}%`;
+}
+
+function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+}
+
+function setDeltaClass(element, delta) {
+    element.classList.remove('positive', 'negative', 'neutral');
+    if (delta > 0.0001) {
+        element.classList.add('positive');
+    } else if (delta < -0.0001) {
+        element.classList.add('negative');
+    } else {
+        element.classList.add('neutral');
     }
 }
 
@@ -632,6 +802,9 @@ function renderHeatmap(data) {
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Kick off predictive analytics fetch immediately (server keeps it warm)
+    loadVolPredictor();
+    
     // Fetch Deribit button
     document.getElementById('btn-fetch-deribit').addEventListener('click', fetchDeribitData);
     
@@ -707,4 +880,47 @@ document.addEventListener('DOMContentLoaded', () => {
             closeModal();
         }
     });
+
+    setupMarketTabs();
 });
+
+function setupMarketTabs() {
+    const buttons = document.querySelectorAll('#market-info .tab-btn');
+    const panels = document.querySelectorAll('#market-info .tab-panel');
+    
+    function activateTab(targetId) {
+        buttons.forEach(btn => {
+            const isActive = btn.dataset.tab === targetId;
+            btn.classList.toggle('active', isActive);
+        });
+        panels.forEach(panel => {
+            const isMatch = panel.id === targetId;
+            panel.classList.toggle('active', isMatch);
+            panel.hidden = !isMatch;
+            panel.style.display = isMatch ? '' : 'none';
+        });
+        if (targetId === 'volpredictor-panel') {
+            requestAnimationFrame(() => {
+                if (volPredictorData && volPredictorData.timeseries) {
+                    renderVolPredictorChart(volPredictorData.timeseries);
+                } else if (charts.volpredictor && window.Plotly) {
+                    const el = document.getElementById(charts.volpredictor);
+                    if (el) {
+                        Plotly.Plots.resize(el);
+                    }
+                }
+            });
+        }
+    }
+    
+    const initial = document.querySelector('#market-info .tab-btn.active');
+    if (initial) {
+        activateTab(initial.dataset.tab);
+    }
+    
+    buttons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            activateTab(btn.dataset.tab);
+        });
+    });
+}

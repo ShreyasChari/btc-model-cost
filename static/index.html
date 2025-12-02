@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bitcoin Cost Model</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="/static/plotly-2.27.0.min.js"></script>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -78,28 +78,105 @@
             </div>
         </div>
 
-        <!-- Market Info -->
+        <!-- Market Info + Vol Predictor -->
         <section id="market-info" class="panel hidden">
             <div class="panel-header">
-                <h2>📈 Market Info</h2>
+                <div>
+                    <h2>📊 Intelligence & Forecasts</h2>
+                    <p class="panel-subtitle">Spot regime dashboard & DVOL prediction</p>
+                </div>
+                <div class="tab-nav">
+                    <button type="button" class="btn btn-secondary btn-tab tab-btn active" data-tab="market-core">
+                        📊 Market Intelligence
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-tab tab-btn" data-tab="volpredictor-panel">
+                        🤖 Vol Prediction
+                    </button>
+                </div>
             </div>
             <div class="panel-content">
-                <div class="info-grid">
-                    <div class="info-card">
-                        <span class="label">BTC Spot</span>
-                        <span id="spot-price" class="value">--</span>
+                <div id="market-core" class="tab-panel active">
+                    <div class="info-grid">
+                        <div class="info-card">
+                            <span class="label">BTC Spot</span>
+                            <span id="spot-price" class="value">--</span>
+                        </div>
+                        <div class="info-card">
+                            <span class="label">Regime</span>
+                            <span id="regime" class="value">--</span>
+                        </div>
+                        <div class="info-card">
+                            <span class="label">Term Structure</span>
+                            <span id="term-structure" class="value">--</span>
+                        </div>
+                        <div class="info-card">
+                            <span class="label">Skew</span>
+                            <span id="skew-regime" class="value">--</span>
+                        </div>
                     </div>
-                    <div class="info-card">
-                        <span class="label">Regime</span>
-                        <span id="regime" class="value">--</span>
+                </div>
+                <div id="volpredictor-panel" class="tab-panel" hidden style="display:none;">
+                    <div class="vol-headline">
+                        <div class="vol-metric">
+                            <span class="label">Predicted DVOL (30d)</span>
+                            <span id="predicted-vol" class="value accent">--</span>
+                        </div>
+                        <div class="vol-metric">
+                            <span class="label">Actual DVOL</span>
+                            <span id="actual-vol" class="value">--</span>
+                        </div>
+                        <div class="vol-metric">
+                            <span class="label">Next Forecast</span>
+                            <span id="vol-forecast" class="value">--</span>
+                        </div>
+                        <div class="vol-metric">
+                            <span class="label">Prediction Error</span>
+                            <span id="vol-error" class="value neutral">--</span>
+                        </div>
                     </div>
-                    <div class="info-card">
-                        <span class="label">Term Structure</span>
-                        <span id="term-structure" class="value">--</span>
+                    <div class="vol-stat-grid">
+                        <div class="vol-stat-card">
+                            <span class="label">RMSE</span>
+                            <span id="vol-rmse" class="value">--</span>
+                        </div>
+                        <div class="vol-stat-card">
+                            <span class="label">MAE</span>
+                            <span id="vol-mae" class="value">--</span>
+                        </div>
+                        <div class="vol-stat-card">
+                            <span class="label">Bias</span>
+                            <span id="vol-bias" class="value">--</span>
+                        </div>
+                        <div class="vol-stat-card">
+                            <span class="label">Direction Hit</span>
+                            <span id="vol-hit-rate" class="value">--</span>
+                        </div>
+                        <div class="vol-stat-card">
+                            <span class="label">Correlation</span>
+                            <span id="vol-corr" class="value">--</span>
+                        </div>
+                        <div class="vol-stat-card">
+                            <span class="label">Vol of Vol</span>
+                            <span id="vol-volatility" class="value">--</span>
+                        </div>
+                        <div class="vol-stat-card">
+                            <span class="label">Vol Regime</span>
+                            <span id="vol-regime" class="value">--</span>
+                        </div>
+                        <div class="vol-stat-card">
+                            <span class="label">Sample Size</span>
+                            <span id="vol-sample" class="value">--</span>
+                        </div>
                     </div>
-                    <div class="info-card">
-                        <span class="label">Skew</span>
-                        <span id="skew-regime" class="value">--</span>
+                    <div class="chart-container">
+                        <div id="volpredictor-plot" style="height:350px;"></div>
+                    </div>
+                    <div class="vol-meta">
+                        <div>
+                            <h4>Insights</h4>
+                            <ul id="vol-insights"></ul>
+                        </div>
+                        <p class="vol-note" id="vol-model-note"></p>
                     </div>
                 </div>
             </div>

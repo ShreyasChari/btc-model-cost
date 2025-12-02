@@ -8,6 +8,12 @@ import asyncio
 from typing import List, Dict, Optional
 from datetime import datetime
 import logging
+import ssl
+
+try:
+    import certifi
+except ImportError:  # pragma: no cover - certifi is in requirements but guard anyway
+    certifi = None
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +30,17 @@ class DeribitClient:
     def __init__(self, testnet: bool = False):
         self.base_url = self.TEST_URL if testnet else self.BASE_URL
         self._session: Optional[aiohttp.ClientSession] = None
+        # Deribit uses a Let’s Encrypt chain that older macOS installs struggle with.
+        # Build an explicit CA bundle via certifi so aiohttp accepts the certificate.
+        if certifi:
+            self._ssl_context = ssl.create_default_context(cafile=certifi.where())
+        else:  # Fallback to default context if certifi is unavailable for some reason
+            self._ssl_context = ssl.create_default_context()
     
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = aiohttp.TCPConnector(ssl=self._ssl_context)
+            self._session = aiohttp.ClientSession(connector=connector)
         return self._session
     
     async def close(self):
@@ -136,16 +149,39 @@ class DeribitClient:
             logger.error(f"Failed to fetch options data: {e}")
             raise
     
-    async def get_dvol(self, currency: str = "BTC") -> float:
-        """Get DVOL (30-day implied volatility index)"""
-        try:
-            result = await self._request("get_volatility_index_data", {
-                "currency": currency,
-                "resolution": "1"
+    async def get_dvol_history(self, currency: str = "BTC", resolution: str = "1",
+                               limit: int = 160) -> List[Dict]:
+        """
+        Fetch DVOL history (close values) and convert to decimals
+        resolution: Deribit supports 1=hourly, 5=5h, 60=daily, etc.
+        """
+        now_ms = int(datetime.utcnow().timestamp() * 1000)
+        hours = max(limit, 10)
+        window_ms = hours * 60 * 60 * 1000
+        result = await self._request("get_volatility_index_data", {
+            "currency": currency,
+            "resolution": resolution,
+            "start_timestamp": now_ms - window_ms,
+            "end_timestamp": now_ms
+        })
+        data = result.get('data', []) if isinstance(result, dict) else []
+        history: List[Dict] = []
+        for entry in data[-limit:]:
+            if not isinstance(entry, (list, tuple)) or len(entry) < 5:
+                continue
+            timestamp_ms = entry[0]
+            close_value = entry[4]
+            history.append({
+                'timestamp': timestamp_ms / 1000,
+                'value': close_value / 100  # convert to decimal
             })
-            if result and 'data' in result and result['data']:
-                return result['data'][-1][4] / 100  # Close price, convert to decimal
-            return None
+        return history
+    
+    async def get_dvol(self, currency: str = "BTC") -> Optional[float]:
+        """Get latest DVOL close"""
+        try:
+            history = await self.get_dvol_history(currency=currency)
+            return history[-1]['value'] if history else None
         except Exception:
             return None
 

@@ -9,10 +9,16 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import asyncio
+import logging
+from datetime import datetime
 
 from cost_model import BitcoinVolSurface, CostModelAnalyzer
 from cost_model.surface import MarketComparison
 from cost_model.deribit import DeribitClient
+from cost_model.volpredictor_service import (
+    run_cycle_async as volpredictor_run_async,
+    build_dashboard_dataframe as build_vol_dashboard,
+)
 
 app = FastAPI(
     title="Bitcoin Cost Model",
@@ -20,12 +26,18 @@ app = FastAPI(
     version="1.0.0"
 )
 
+logger = logging.getLogger("btc-cost-model")
+VOLPREDICTOR_REFRESH_SECONDS = 15 * 60  # 15 minutes
+
 # Global state
 surface: Optional[BitcoinVolSurface] = None
 analyzer: Optional[CostModelAnalyzer] = None
 comparison: Optional[MarketComparison] = None
 market_options: List[Dict] = []  # Raw market data
 deribit = DeribitClient()
+volpredictor_data: Optional[Dict] = None
+volpredictor_task: Optional[asyncio.Task] = None
+volpredictor_lock = asyncio.Lock()
 
 
 # ============================================================================
@@ -306,8 +318,67 @@ async def get_raw_market_data():
     }
 
 
+@app.get("/api/volpredictor")
+async def get_vol_predictor_dashboard(force_refresh: bool = False):
+    """Return predicted vs actual DVOL analytics for the Vol Predictor tab"""
+    try:
+        if force_refresh or volpredictor_data is None:
+            data = await refresh_volpredictor()
+        else:
+            data = volpredictor_data
+        return data
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+async def refresh_volpredictor() -> Dict:
+    """Refresh the cached Vol Predictor analytics"""
+    global volpredictor_data
+    async with volpredictor_lock:
+        df = await volpredictor_run_async()
+        dashboard = build_vol_dashboard(df)
+        dashboard["refreshed_at"] = datetime.utcnow().isoformat() + "Z"
+        volpredictor_data = dashboard
+        return dashboard
+
+
+async def volpredictor_loop():
+    """Background task that keeps Vol Predictor analytics warm"""
+    while True:
+        try:
+            await refresh_volpredictor()
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.exception("Vol Predictor refresh failed: %s", exc)
+        try:
+            await asyncio.sleep(VOLPREDICTOR_REFRESH_SECONDS)
+        except asyncio.CancelledError:
+            break
+
+
+@app.on_event("startup")
+async def startup_events():
+    global volpredictor_task
+    if volpredictor_task is None or volpredictor_task.done():
+        volpredictor_task = asyncio.create_task(volpredictor_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_events():
+    if volpredictor_task:
+        volpredictor_task.cancel()
+        try:
+            await volpredictor_task
+        except asyncio.CancelledError:
+            pass
+    await deribit.close()
 
 
 if __name__ == "__main__":
